@@ -4,115 +4,13 @@ var format = require('util').format;
 var spawn = require('cross-spawn').spawn;
 var path = require('path');
 var Base = require('../../lib/reporters/base');
-
+var debug = require('debug')('mocha:tests:integration:helpers');
 var DEFAULT_FIXTURE = resolveFixturePath('__default__');
 var MOCHA_EXECUTABLE = require.resolve('../../bin/mocha');
 var _MOCHA_EXECUTABLE = require.resolve('../../bin/_mocha');
 
 module.exports = {
   DEFAULT_FIXTURE: DEFAULT_FIXTURE,
-  /**
-   * Invokes the mocha binary for the given fixture with color output disabled.
-   * Accepts an array of additional command line args to pass. The callback is
-   * invoked with a summary of the run, in addition to its output. The summary
-   * includes the number of passing, pending, and failing tests, as well as the
-   * exit code. Useful for testing different reporters.
-   *
-   * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
-   * want it.
-   * Example response:
-   * {
-   *   pending: 0,
-   *   passing: 0,
-   *   failing: 1,
-   *   code:    1,
-   *   output:  '...'
-   * }
-   *
-   * @param {string} fixturePath - Path to fixture .js file
-   * @param {string[]} args - Extra args to mocha executable
-   * @param {Function} fn - Callback
-   * @param {Object} [opts] - Options for `spawn()`
-   */
-  runMocha: function(fixturePath, args, fn, opts) {
-    if (typeof args === 'function') {
-      opts = fn;
-      fn = args;
-      args = [];
-    }
-
-    var path;
-
-    path = resolveFixturePath(fixturePath);
-    args = args || [];
-
-    invokeSubMocha(
-      args.concat(['-C', path]),
-      function(err, res) {
-        if (err) {
-          return fn(err);
-        }
-
-        fn(null, getSummary(res));
-      },
-      opts
-    );
-  },
-
-  /**
-   * Invokes the mocha binary for the given fixture using the JSON reporter,
-   * returning the parsed output, as well as exit code.
-   *
-   * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
-   * want it.
-   * @param {string} fixturePath - Path from __dirname__
-   * @param {string[]} args - Array of args
-   * @param {Function} fn - Callback
-   * @param {Object} [opts] - Opts for `spawn()`
-   * @returns {*} Parsed object
-   */
-  runMochaJSON: function(fixturePath, args, fn, opts) {
-    if (typeof args === 'function') {
-      opts = fn;
-      fn = args;
-      args = [];
-    }
-
-    var path;
-
-    path = resolveFixturePath(fixturePath);
-    args = (args || []).concat('--reporter', 'json', path);
-
-    return invokeMocha(
-      args,
-      function(err, res) {
-        if (err) {
-          return fn(err);
-        }
-
-        var result;
-        try {
-          // attempt to catch a JSON parsing error *only* here.
-          // previously, the callback was called within this `try` block,
-          // which would result in errors thrown from the callback
-          // getting caught by the `catch` block below.
-          result = toJSONRunResult(res);
-        } catch (err) {
-          return fn(
-            new Error(
-              format(
-                'Failed to parse JSON reporter output. Error:\n%O\nResult:\n%O',
-                err,
-                res
-              )
-            )
-          );
-        }
-        fn(null, result);
-      },
-      opts
-    );
-  },
 
   /**
    * regular expression used for splitting lines based on new line / dot symbol.
@@ -145,6 +43,8 @@ module.exports = {
 
   invokeNode: invokeNode,
 
+  getSummary: getSummary,
+
   /**
    * Resolves the path to a fixture to the full path.
    */
@@ -159,8 +59,164 @@ module.exports = {
    */
   escapeRegExp: function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-  }
+  },
+
+  runMocha: runMocha,
+  runMochaJSON: runMochaJSON,
+  runMochaAsync: runMochaAsync,
+  runMochaJSONAsync: runMochaJSONAsync
 };
+
+/**
+ * Invokes the mocha binary for the given fixture with color output disabled.
+ * Accepts an array of additional command line args to pass. The callback is
+ * invoked with a summary of the run, in addition to its output. The summary
+ * includes the number of passing, pending, and failing tests, as well as the
+ * exit code. Useful for testing different reporters.
+ *
+ * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
+ * want it.
+ * Example response:
+ * {
+ *   pending: 0,
+ *   passing: 0,
+ *   failing: 1,
+ *   code:    1,
+ *   output:  '...'
+ * }
+ *
+ * @param {string} fixturePath - Path to fixture .js file
+ * @param {string[]} args - Extra args to mocha executable
+ * @param {Function} fn - Callback
+ * @param {Object} [opts] - Options for `spawn()`
+ */
+function runMocha(fixturePath, args, fn, opts) {
+  if (typeof args === 'function') {
+    opts = fn;
+    fn = args;
+    args = [];
+  }
+
+  var path;
+
+  path = resolveFixturePath(fixturePath);
+  args = args || [];
+
+  return invokeSubMocha(
+    args.concat(path),
+    function(err, res) {
+      if (err) {
+        return fn(err);
+      }
+
+      fn(null, getSummary(res));
+    },
+    opts
+  );
+}
+
+/**
+ * Invokes the mocha binary for the given fixture using the JSON reporter,
+ * returning the parsed output, as well as exit code.
+ *
+ * By default, `STDERR` is ignored. Pass `{stdio: 'pipe'}` as `opts` if you
+ * want it.
+ * @param {string} fixturePath - Path from __dirname__
+ * @param {string[]} args - Array of args
+ * @param {Function} fn - Callback
+ * @param {Object} [opts] - Opts for `spawn()`
+ * @returns {*} Parsed object
+ */
+function runMochaJSON(fixturePath, args, fn, opts) {
+  if (typeof args === 'function') {
+    opts = fn;
+    fn = args;
+    args = [];
+  }
+
+  var path;
+
+  path = resolveFixturePath(fixturePath);
+  args = (args || []).concat('--reporter', 'json', path);
+
+  return invokeMocha(
+    args,
+    function(err, res) {
+      if (err) {
+        return fn(err);
+      }
+
+      var result;
+      try {
+        // attempt to catch a JSON parsing error *only* here.
+        // previously, the callback was called within this `try` block,
+        // which would result in errors thrown from the callback
+        // getting caught by the `catch` block below.
+        result = toJSONRunResult(res);
+      } catch (err) {
+        return fn(
+          new Error(
+            format(
+              'Failed to parse JSON reporter output. Error:\n%O\nResult:\n%O',
+              err,
+              res
+            )
+          )
+        );
+      }
+      fn(null, result);
+    },
+    opts
+  );
+}
+
+/**
+ * Like {@link runMocha}, but returns a `Promise`.
+ *
+ * If you need more granular control, try {@link invokeMochaAsync} instead.
+ *
+ * @param {string} fixturePath - Path to (or name of, or basename of) fixture file
+ * @param {Options} [args] - Command-line arguments to the `mocha` executable
+ * @param {Object} [opts] - Options for `child_process.spawn`.
+ * @returns {Promise<Summary>}
+ */
+function runMochaAsync(fixturePath, args, opts) {
+  return new Promise(function(resolve, reject) {
+    runMocha(
+      fixturePath,
+      args,
+      function(err, result) {
+        if (err) {
+          return reject(err);
+        }
+        resolve(result);
+      },
+      opts
+    );
+  });
+}
+
+/**
+ * Like {@link runMochaJSON}, but returns a `Promise`.
+ * @param {string} fixturePath - Path to (or name of, or basename of) fixture file
+ * @param {Options} [args] - Command-line args
+ * @param {Object} [opts] - Options for `child_process.spawn`
+ */
+function runMochaJSONAsync(fixturePath, args, opts) {
+  return new Promise(function(resolve, reject) {
+    runMochaJSON(
+      fixturePath,
+      args,
+      function(err, result) {
+        if (err) {
+          return reject(err);
+        }
+        resolve(result);
+      },
+      opts
+    );
+  });
+}
 
 /**
  * Coerce output as returned by _spawnMochaWithListeners using JSON reporter into a JSONRunResult as
@@ -170,9 +226,15 @@ module.exports = {
  */
 function toJSONRunResult(result) {
   var code = result.code;
-  result = JSON.parse(result.output);
-  result.code = code;
-  return result;
+  try {
+    result = JSON.parse(result.output);
+    result.code = code;
+    return result;
+  } catch (err) {
+    throw new Error(
+      `Couldn't parse JSON: ${err.message}\n\nOriginal result output: ${result.output}`
+    );
+  }
 }
 
 /**
@@ -266,16 +328,24 @@ function invokeSubMocha(args, fn, opts) {
  */
 function _spawnMochaWithListeners(args, fn, opts) {
   var output = '';
+  opts = opts || {};
   if (opts === 'pipe') {
-    opts = {stdio: 'pipe'};
+    opts = {stdio: ['inherit', 'pipe', 'pipe']};
   }
+  var env = Object.assign({}, process.env);
+  // prevent DEBUG from borking STDERR when piping, unless explicitly set via `opts`
+  delete env.DEBUG;
+
   opts = Object.assign(
     {
       cwd: process.cwd(),
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['inherit', 'pipe', 'inherit'],
+      env: env
     },
-    opts || {}
+    opts
   );
+
+  debug('spawning: %s', [process.execPath].concat(args).join(' '));
   var mocha = spawn(process.execPath, args, opts);
   var listener = function(data) {
     output += data;
@@ -291,7 +361,8 @@ function _spawnMochaWithListeners(args, fn, opts) {
     fn(null, {
       output: output,
       code: code,
-      args: args
+      args: args,
+      command: args.join(' ')
     });
   });
 
@@ -305,6 +376,11 @@ function resolveFixturePath(fixture) {
   return path.join('test', 'integration', 'fixtures', fixture);
 }
 
+/**
+ * Parses some `mocha` reporter output and returns a summary based on the "epilogue"
+ * @param {string} res - Typically output of STDOUT from the 'spec' reporter
+ * @returns {Summary}
+ */
 function getSummary(res) {
   return ['passing', 'pending', 'failing'].reduce(function(summary, type) {
     var pattern, match;
@@ -316,3 +392,11 @@ function getSummary(res) {
     return summary;
   }, res);
 }
+
+/**
+ * A summary of a `mocha` run
+ * @typedef {Object} Summary
+ * @property {number} passing - Number of passing tests
+ * @property {number} pending - Number of pending tests
+ * @property {number} failing - Number of failing tests
+ */
