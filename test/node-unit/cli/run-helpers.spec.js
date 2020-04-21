@@ -1,6 +1,10 @@
 'use strict';
 
-const {validatePlugin, list} = require('../../../lib/cli/run-helpers');
+const {
+  validatePlugin,
+  list,
+  loadRootHooks
+} = require('../../../lib/cli/run-helpers');
 const {createSandbox} = require('sinon');
 
 describe('cli "run" command', function() {
@@ -15,8 +19,69 @@ describe('cli "run" command', function() {
   });
 
   describe('helpers', function() {
-    describe('validatePlugin()', function() {
-      it('should disallow an array of module names', function() {
+    describe('loadRootHooks()', function() {
+      describe('when passed nothing', function() {
+        it('should reject', async function() {
+          return expect(loadRootHooks(), 'to be rejected');
+        });
+      });
+
+      describe('when passed empty array of hooks', function() {
+        it('should return an empty MochaRootHooks object', async function() {
+          return expect(loadRootHooks([]), 'to be fulfilled with', {
+            beforeAll: [],
+            beforeEach: [],
+            afterAll: [],
+            afterEach: []
+          });
+        });
+      });
+
+      describe('when passed an array containing hook objects and sync functions and async functions', function() {
+        it('should flatten them into a single object', async function() {
+          function a() {}
+          function b() {}
+          function d() {}
+          function g() {}
+          function f() {}
+          function c() {
+            return {
+              beforeAll: d,
+              beforeEach: g
+            };
+          }
+          async function e() {
+            return {
+              afterEach: f
+            };
+          }
+          return expect(
+            loadRootHooks([
+              {
+                beforeEach: a
+              },
+              {
+                afterAll: b
+              },
+              c,
+              e
+            ]),
+            'to be fulfilled with',
+            {
+              beforeAll: [d],
+              beforeEach: [a, g],
+              afterAll: [b],
+              afterEach: [f]
+            }
+          );
+        });
+      });
+    });
+  });
+
+  describe('validatePlugin()', function() {
+    describe('when used with "reporter" key', function() {
+      it('should disallow an array of names', function() {
         expect(
           () => validatePlugin({foo: ['bar']}, 'foo'),
           'to throw a',
